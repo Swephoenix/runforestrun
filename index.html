@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RunPod + Ollama + OpenCode Generator</title>
+<title>RunPod + Ollama + OpenCode Generator 64K</title>
 <style>
 body{
   margin:0;
@@ -67,7 +67,7 @@ button:hover{
 </head>
 <body>
 
-<h1>RunPod + Ollama + OpenCode Generator</h1>
+<h1>RunPod + Ollama + OpenCode Generator 64K</h1>
 
 <div class="box">
 <label>1. Klistra in modellnamn från Ollama</label>
@@ -76,7 +76,7 @@ button:hover{
 <label>2. Klistra in RunPod SSH-rad</label>
 <input id="sshraw" placeholder="ssh root@213.173.107.12 -p 29627 -i ~/.ssh/id_ed25519">
 
-<p class="small">Scripts uppdateras automatiskt när du skriver.</p>
+<p class="small">Scripts uppdateras automatiskt. OpenCode får permanent 64K context.</p>
 </div>
 
 <div class="box">
@@ -86,13 +86,13 @@ button:hover{
 </div>
 
 <div class="box">
-<h2>Script 1 , RunPod Ollama Setup</h2>
+<h2>Script 1 , RunPod Ollama Setup (64K permanent)</h2>
 <pre id="script1"></pre>
 <button onclick="copy('script1')">Kopiera</button>
 </div>
 
 <div class="box">
-<h2>Script 2 , Lokal OpenCode Setup</h2>
+<h2>Script 2 , Lokal OpenCode Setup (64K modell)</h2>
 <pre id="script2"></pre>
 <button onclick="copy('script2')">Kopiera</button>
 </div>
@@ -121,13 +121,15 @@ function generateAll(){
   const sshInput = document.getElementById("sshraw").value.trim();
 
   const model = modelInput || "qwen3.5:latest";
+  const customModel = model.replace(/[:]/g,"-") + "-64k";
+
   const ssh = parseSSH(sshInput);
 
   const tunnel = `ssh -L 11435:127.0.0.1:11434 ${ssh.user}@${ssh.ip} -p ${ssh.port} -i ${ssh.key}`;
 
   document.getElementById("sshout").textContent = tunnel;
 
-  document.getElementById("script1").textContent =
+document.getElementById("script1").textContent =
 `cat << 'EOF' > setup_runpod_ollama.sh
 #!/bin/bash
 
@@ -144,13 +146,17 @@ sleep 5
 
 OLLAMA_MODELS=/workspace/.ollama ollama pull ${model}
 
+cat << MODELEOF > Modelfile
+FROM ${model}
+PARAMETER num_ctx 65536
+MODELEOF
+
+OLLAMA_MODELS=/workspace/.ollama ollama create ${customModel} -f Modelfile
+
 curl -s -X POST http://127.0.0.1:11434/api/generate -d '{
-  "model":"${model}",
+  "model":"${customModel}",
   "prompt":"Write a beautiful poem about stars and silence.",
-  "stream": true,
-  "options":{
-    "num_ctx":65536
-  }
+  "stream": true
 }'
 
 echo ""
@@ -160,7 +166,7 @@ EOF
 
 bash setup_runpod_ollama.sh`;
 
-  document.getElementById("script2").textContent =
+document.getElementById("script2").textContent =
 `# 1. Installera OpenCode
 curl -fsSL https://opencode.ai/install | bash
 
@@ -178,9 +184,9 @@ cat << 'EOF' > ~/.config/opencode/opencode.json
         "baseURL": "http://127.0.0.1:11435/v1"
       },
       "models": {
-        "${model}": {
+        "${customModel}": {
           "_launch": true,
-          "name": "${model}"
+          "name": "${customModel}"
         }
       }
     }
@@ -199,7 +205,7 @@ echo "${tunnel}"
 
 echo ""
 echo "Starta OpenCode:"
-echo "opencode --model ollama/${model}"`;
+echo "opencode --model ollama/${customModel}"`;
 }
 
 function copy(id){
