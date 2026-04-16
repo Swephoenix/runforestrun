@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RunPod + Ollama + OpenCode Generator</title>
+<style>
+body{
+  margin:0;
+  padding:20px;
+  font-family:Arial,sans-serif;
+  background:#0f172a;
+  color:#e2e8f0;
+}
+h1,h2{
+  text-align:center;
+}
+.box{
+  background:#1e293b;
+  padding:18px;
+  border-radius:12px;
+  margin:16px 0;
+}
+label{
+  display:block;
+  margin-bottom:8px;
+  font-weight:bold;
+}
+input{
+  width:100%;
+  box-sizing:border-box;
+  padding:10px;
+  border-radius:8px;
+  border:none;
+  margin-bottom:12px;
+  background:#020617;
+  color:#e2e8f0;
+}
+input::placeholder{
+  color:#94a3b8;
+}
+pre{
+  background:#020617;
+  padding:14px;
+  border-radius:8px;
+  overflow-x:auto;
+  white-space:pre-wrap;
+}
+button{
+  padding:10px 16px;
+  border:none;
+  border-radius:8px;
+  cursor:pointer;
+  font-weight:bold;
+  background:#22c55e;
+  color:#000;
+  margin-top:10px;
+}
+button:hover{
+  background:#16a34a;
+}
+.small{
+  color:#94a3b8;
+  font-size:14px;
+}
+</style>
+</head>
+<body>
+
+<h1>RunPod + Ollama + OpenCode Generator</h1>
+
+<div class="box">
+<label>1. Klistra in modellnamn från Ollama</label>
+<input id="model" placeholder="t.ex. qwen3.5:latest">
+
+<label>2. Klistra in RunPod SSH-rad</label>
+<input id="sshraw" placeholder="ssh root@213.173.107.12 -p 29627 -i ~/.ssh/id_ed25519">
+
+<p class="small">Scripts uppdateras automatiskt när du skriver.</p>
+</div>
+
+<div class="box">
+<h2>SSH Tunnel lokalt</h2>
+<pre id="sshout"></pre>
+<button onclick="copy('sshout')">Kopiera</button>
+</div>
+
+<div class="box">
+<h2>Script 1 , RunPod Ollama Setup</h2>
+<pre id="script1"></pre>
+<button onclick="copy('script1')">Kopiera</button>
+</div>
+
+<div class="box">
+<h2>Script 2 , Lokal OpenCode Setup</h2>
+<pre id="script2"></pre>
+<button onclick="copy('script2')">Kopiera</button>
+</div>
+
+<script>
+function parseSSH(raw){
+  let ip="<ip>", port="<port>", key="~/.ssh/id_ed25519", user="root";
+
+  const userHost = raw.match(/ssh\s+([^@]+)@([^\s]+)/);
+  if(userHost){
+    user = userHost[1];
+    ip = userHost[2];
+  }
+
+  const p = raw.match(/\s-p\s+(\d+)/);
+  if(p) port = p[1];
+
+  const i = raw.match(/\s-i\s+([^\s]+)/);
+  if(i) key = i[1];
+
+  return {user, ip, port, key};
+}
+
+function generateAll(){
+  const modelInput = document.getElementById("model").value.trim();
+  const sshInput = document.getElementById("sshraw").value.trim();
+
+  const model = modelInput || "qwen3.5:latest";
+  const ssh = parseSSH(sshInput);
+
+  const tunnel = `ssh -L 11435:127.0.0.1:11434 ${ssh.user}@${ssh.ip} -p ${ssh.port} -i ${ssh.key}`;
+
+  document.getElementById("sshout").textContent = tunnel;
+
+  document.getElementById("script1").textContent =
+`cat << 'EOF' > setup_runpod_ollama.sh
+#!/bin/bash
+
+apt update && apt install -y zstd curl pciutils
+pkill ollama 2>/dev/null
+curl -fsSL https://ollama.com/install.sh | sh
+
+mkdir -p /workspace/.ollama
+export OLLAMA_MODELS=/workspace/.ollama
+export OLLAMA_HOST=0.0.0.0:11434
+
+nohup ollama serve > /workspace/ollama.log 2>&1 &
+sleep 5
+
+OLLAMA_MODELS=/workspace/.ollama ollama pull ${model}
+
+curl -s -X POST http://127.0.0.1:11434/api/generate -d '{
+  "model":"${model}",
+  "prompt":"Write a beautiful poem about stars and silence.",
+  "stream": true,
+  "options":{
+    "num_ctx":65536
+  }
+}'
+
+echo ""
+echo "SSH tunnel:"
+echo "${tunnel}"
+EOF
+
+bash setup_runpod_ollama.sh`;
+
+  document.getElementById("script2").textContent =
+`# 1. Installera OpenCode
+curl -fsSL https://opencode.ai/install | bash
+
+# 2. Skapa configmapp
+mkdir -p ~/.config/opencode
+
+# 3. Skriv config
+cat << 'EOF' > ~/.config/opencode/opencode.json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "name": "Ollama (runpod)",
+      "options": {
+        "baseURL": "http://127.0.0.1:11435/v1"
+      },
+      "models": {
+        "${model}": {
+          "_launch": true,
+          "name": "${model}"
+        }
+      }
+    }
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": "allow"
+  }
+}
+EOF
+
+source ~/.bashrc
+
+echo "Starta tunnel:"
+echo "${tunnel}"
+
+echo ""
+echo "Starta OpenCode:"
+echo "opencode --model ollama/${model}"`;
+}
+
+function copy(id){
+  navigator.clipboard.writeText(
+    document.getElementById(id).textContent
+  );
+  alert("Kopierat!");
+}
+
+document.getElementById("model").addEventListener("input", generateAll);
+document.getElementById("sshraw").addEventListener("input", generateAll);
+
+generateAll();
+</script>
+
+</body>
+</html>
